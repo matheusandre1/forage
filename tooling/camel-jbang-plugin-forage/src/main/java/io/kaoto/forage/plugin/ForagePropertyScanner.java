@@ -24,6 +24,9 @@ import io.kaoto.forage.catalog.reader.ForageCatalogReader;
 public final class ForagePropertyScanner {
 
     private static final Pattern FORAGE_PROPERTY_PATTERN = Pattern.compile("^forage\\.(.+)$");
+    /** The shared application properties file name. */
+    public static final String APPLICATION_PROPERTIES = "application.properties";
+
     private static final String PROFILE_PROPERTY = "camel.main.profile";
     private static final String PROFILE_ENV_VAR = "CAMEL_MAIN_PROFILE";
 
@@ -94,21 +97,18 @@ public final class ForagePropertyScanner {
             collectForageProperties(baseProps, applicationPropsFile, catalog, trackUnknown, result);
         }
 
-        String profile = resolveProfile(baseProps);
-        if (profile != null) {
-            File profileFile = new File(directory, "application-" + profile + ".properties");
-            if (profileFile.isFile()) {
-                Properties profileProps = new Properties();
-                try (FileInputStream fis = new FileInputStream(profileFile)) {
-                    profileProps.load(fis);
-                }
-                // Profile properties override base: replace matching occurrences
-                overrideForageProperties(profileProps, profileFile, catalog, trackUnknown, result);
+        File profileFile = findProfileProperties(directory, baseProps);
+        if (profileFile != null) {
+            Properties profileProps = new Properties();
+            try (FileInputStream fis = new FileInputStream(profileFile)) {
+                profileProps.load(fis);
             }
+            // Profile properties override base: replace matching occurrences
+            overrideForageProperties(profileProps, profileFile, catalog, trackUnknown, result);
         }
 
         // Load forage-specific and catalog-named properties files independently
-        List<File> nonAppFiles = findNonApplicationPropertiesFiles(directory, catalog);
+        List<File> nonAppFiles = findForagePropertiesFiles(directory, catalog);
         for (File file : nonAppFiles) {
             Properties props = new Properties();
             try (FileInputStream fis = new FileInputStream(file)) {
@@ -216,9 +216,76 @@ public final class ForagePropertyScanner {
         groupMap.computeIfAbsent(propertyName, k -> new ArrayList<>()).add(occurrence);
     }
 
-    private static File loadApplicationProperties(File dir) {
-        File file = new File(dir, "application.properties");
+    /**
+     * Returns the {@code application.properties} file of the given directory.
+     *
+     * @param dir the directory to look in
+     * @return the file, or {@code null} if it does not exist
+     */
+    public static File loadApplicationProperties(File dir) {
+        File file = new File(dir, APPLICATION_PROPERTIES);
         return file.isFile() ? file : null;
+    }
+
+    /**
+     * Returns the {@code application-<profile>.properties} file for the active Camel profile, resolved from
+     * {@code camel.main.profile} / {@code CAMEL_MAIN_PROFILE} or the given base properties.
+     *
+     * @return the profile file, or {@code null} if no profile is active or the file does not exist
+     */
+    private static File findProfileProperties(File dir, Properties applicationProps) {
+        String profile = resolveProfile(applicationProps);
+        if (profile == null) {
+            return null;
+        }
+        File file = new File(dir, "application-" + profile + ".properties");
+        return file.isFile() ? file : null;
+    }
+
+    /**
+     * Returns every properties file the scanner loads Forage configuration from, in loading order:
+     * {@code application.properties}, the active profile's {@code application-<profile>.properties}, and the
+     * files returned by {@link #findForagePropertiesFiles(File, ForageCatalogReader)}.
+     *
+     * @param dir the directory to scan
+     * @param catalog the catalog reader
+     * @return the existing files, never {@code null}
+     * @throws IOException if a file cannot be read or the directory cannot be scanned
+     */
+    public static List<File> findRuntimePropertiesFiles(File dir, ForageCatalogReader catalog) throws IOException {
+        List<File> files = new ArrayList<>();
+        File applicationPropsFile = loadApplicationProperties(dir);
+        Properties baseProps = null;
+        if (applicationPropsFile != null) {
+            files.add(applicationPropsFile);
+            baseProps = new Properties();
+            try (FileInputStream fis = new FileInputStream(applicationPropsFile)) {
+                baseProps.load(fis);
+            }
+        }
+        File profileFile = findProfileProperties(dir, baseProps);
+        if (profileFile != null) {
+            files.add(profileFile);
+        }
+        files.addAll(findForagePropertiesFiles(dir, catalog));
+        return files;
+    }
+
+    /**
+     * Resolves the factory type key a {@code forage.*} property belongs to, using the same parsing as the
+     * scanner. Handles both default ({@code forage.jdbc.url}) and named ({@code forage.ds1.jdbc.url})
+     * instances.
+     *
+     * @param propertyKey the full property key
+     * @param catalog the catalog reader
+     * @return the factory type key, or empty if the key is not a recognised Forage property
+     */
+    public static Optional<String> findFactoryTypeKey(String propertyKey, ForageCatalogReader catalog) {
+        Matcher matcher = FORAGE_PROPERTY_PATTERN.matcher(propertyKey);
+        if (!matcher.matches()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(parsePropertyKey(matcher.group(1), catalog)).map(ParseResult::factoryTypeKey);
     }
 
     static String resolveProfile(Properties applicationProps) {
@@ -241,8 +308,20 @@ public final class ForagePropertyScanner {
         return System.getenv(PROFILE_ENV_VAR);
     }
 
-    private static List<File> findNonApplicationPropertiesFiles(File dir, ForageCatalogReader catalog)
-            throws IOException {
+    /**
+     * Finds the non-application Forage properties files in the given directory: the catalog-known file names
+     * (one per module, named after its {@code Config.name()}) plus any {@code forage-*.properties} file. Only the
+     * top level of the directory is scanned.
+     *
+     * <p>Note that the {@code forage-*.properties} wildcard is only loaded at runtime on Spring Boot; plain Camel
+     * and Quarkus only load the catalog-known file names (and {@code application.properties}).
+     *
+     * @param dir the directory to scan
+     * @param catalog the catalog reader
+     * @return the matching files, never {@code null}
+     * @throws IOException if the directory cannot be scanned
+     */
+    public static List<File> findForagePropertiesFiles(File dir, ForageCatalogReader catalog) throws IOException {
         Set<String> catalogFileNames = new java.util.HashSet<>();
 
         for (ForageCatalogReader.FactoryMetadata metadata : catalog.getAllFactories()) {

@@ -159,6 +159,41 @@ class ForagePropertyScannerTest {
         assertThat(result).isEmpty();
     }
 
+    @Test
+    void runtimePropertiesFilesIncludeApplicationProfileAndForageFiles() throws Exception {
+        writeFile("application.properties", "camel.main.profile=dev\n");
+        writeFile("application-dev.properties", "forage.ds.jdbc.db.kind=h2\n");
+        writeFile("application-prod.properties", "forage.ds.jdbc.db.kind=h2\n");
+        writeFile("forage-custom.properties", "forage.ds2.jdbc.db.kind=h2\n");
+        writeFile("other.properties", "forage.ds3.jdbc.db.kind=h2\n");
+
+        assertThat(ForagePropertyScanner.findRuntimePropertiesFiles(tempDir, catalog))
+                .containsExactly(
+                        new File(tempDir, "application.properties"),
+                        new File(tempDir, "application-dev.properties"),
+                        new File(tempDir, "forage-custom.properties"));
+    }
+
+    @Test
+    void runtimePropertiesFilesWithoutProfile() throws Exception {
+        writeFile("application-dev.properties", "forage.ds.jdbc.db.kind=h2\n");
+
+        assertThat(ForagePropertyScanner.findRuntimePropertiesFiles(tempDir, catalog))
+                .isEmpty();
+    }
+
+    @Test
+    void findFactoryTypeKeyHandlesDefaultAndNamedInstances() {
+        assertThat(ForagePropertyScanner.findFactoryTypeKey("forage.rabbitmq.host", catalog))
+                .contains("rabbitmq");
+        assertThat(ForagePropertyScanner.findFactoryTypeKey("forage.second.rabbitmq.virtual.host", catalog))
+                .contains("rabbitmq");
+        assertThat(ForagePropertyScanner.findFactoryTypeKey("forage.ds1.jdbc.url", catalog))
+                .contains("jdbc");
+        assertThat(ForagePropertyScanner.findFactoryTypeKey("camel.jbang.dependencies", catalog))
+                .isEmpty();
+    }
+
     private void writeFile(String name, String content) throws IOException {
         File file = new File(tempDir, name);
         try (FileWriter writer = new FileWriter(file)) {

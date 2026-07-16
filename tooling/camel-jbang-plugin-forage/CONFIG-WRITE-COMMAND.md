@@ -78,9 +78,12 @@ PROCESSING PIPELINE
    │ getPropertiesFileName(factoryTypeKey)    │
    │                                           │
    │ Strategy "forage":                        │
-   │   → forage-{factoryType}.properties      │
+   │   → catalog file (Config.name()), e.g.   │
+   │     forage-datasource-factory.properties │
+   │   → error if the factory has no file     │
+   │     (Security Policy, WebSearch)         │
    │                                           │
-   │ Strategy "application":                   │
+   │ Strategy "application" (default):         │
    │   → application.properties               │
    └──────────────┬────────────────────────────┘
                   │
@@ -137,7 +140,8 @@ DELETE MODE
 │ handleDelete()                                            │
 │                                                           │
 │ 1. Requires --name parameter                             │
-│ 2. Scans properties files based on strategy              │
+│ 2. Scans the same files `config read` lists for the      │
+│    strategy (top level of --dir only)                    │
 │ 3. Removes lines matching: forage.{instanceName}.*       │
 │ 4. Collects deleted types (e.g., "ollama", "postgresql") │
 │ 5. Calls cleanupUnusedDependencies()                     │
@@ -150,7 +154,10 @@ DELETE MODE
 ┌──────────────────────────────────────────────────────────┐
 │ cleanupUnusedDependencies()                               │
 │                                                           │
-│ 1. Scans remaining properties for configured types       │
+│ 1. Scans remaining properties for configured types in    │
+│    every file the scanner loads, whatever the strategy:  │
+│    application.properties, the active profile file and   │
+│    forage-*.properties (default instances included)      │
 │ 2. For each deleted type not in remaining:               │
 │    • Remove bean GAV (e.g., forage-jdbc-postgresql)      │
 │ 3. For each factory type with no remaining instances:    │
@@ -313,7 +320,7 @@ camel forage config write --delete --name myOllama
 |--------|-------|-------------|---------|
 | `--input` | `-i` | JSON input string containing configuration values | stdin |
 | `--dir` | `-d` | Directory where properties files will be written | current directory |
-| `--strategy` | `-s` | Property file strategy: 'forage' or 'application' | forage |
+| `--strategy` | `-s` | Property file strategy: 'application' or 'forage' (case-insensitive) | application |
 | `--delete` | | Delete configuration for a specific instance | false |
 | `--name` | `-n` | Instance name to delete (used with --delete) | |
 
@@ -458,6 +465,8 @@ When deleting a configuration with `--delete --name <instanceName>`, the command
 ## Error Handling
 
 The command returns exit code 1 and JSON error response for:
+- Unknown `--strategy` value
+- A factory without a dedicated properties file under `--strategy forage` (nothing is written)
 - Empty or invalid JSON input
 - Missing required configuration
 - File system errors

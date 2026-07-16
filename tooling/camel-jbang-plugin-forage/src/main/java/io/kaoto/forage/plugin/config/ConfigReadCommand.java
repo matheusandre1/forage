@@ -3,10 +3,7 @@ package io.kaoto.forage.plugin.config;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,15 +12,12 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
-import org.apache.camel.dsl.jbang.core.commands.CamelCommand;
 import org.apache.camel.dsl.jbang.core.commands.CamelJBangMain;
 import io.kaoto.forage.catalog.model.ConditionalBeanGroup;
 import io.kaoto.forage.catalog.model.ConditionalBeanInfo;
 import io.kaoto.forage.catalog.model.ConfigEntry;
 import io.kaoto.forage.catalog.reader.ForageCatalogReader;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import picocli.CommandLine;
 
 /**
@@ -32,9 +26,7 @@ import picocli.CommandLine;
  * by providing a machine-readable view of configured beans.
  */
 @CommandLine.Command(name = "read", description = "Read Forage configuration and list beans that would be created")
-public class ConfigReadCommand extends CamelCommand {
-
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+public class ConfigReadCommand extends AbstractConfigCommand {
 
     // Pattern to match forage properties: forage.{factoryTypeKey}.{property} or
     // forage.{instanceName}.{factoryTypeKey}.{property}
@@ -55,15 +47,6 @@ public class ConfigReadCommand extends CamelCommand {
             description = "Filter by factory type (e.g., 'jdbc', 'jms', 'agent'). If not specified, shows all.")
     private String filter;
 
-    @CommandLine.Option(
-            names = {"--strategy", "-s"},
-            description = "Property file strategy: 'application' reads from application.properties (default), "
-                    + "'forage' reads from forage-*.properties files.",
-            defaultValue = "application")
-    private String strategy;
-
-    private ForageCatalogReader catalog;
-
     public ConfigReadCommand(CamelJBangMain main) {
         super(main);
     }
@@ -81,7 +64,10 @@ public class ConfigReadCommand extends CamelCommand {
     @Override
     public Integer doCall() throws Exception {
         try {
-            catalog = ForageCatalogReader.getInstance();
+            Optional<String> strategyError = initCatalogAndStrategy();
+            if (strategyError.isPresent()) {
+                return outputError(strategyError.get());
+            }
 
             if (directory == null) {
                 directory = new File(System.getProperty("user.dir"));
@@ -92,7 +78,7 @@ public class ConfigReadCommand extends CamelCommand {
             }
 
             // Find all properties files
-            List<File> propertiesFiles = findPropertiesFiles(directory);
+            List<File> propertiesFiles = strategy.findPropertiesFiles(directory);
             if (propertiesFiles.isEmpty()) {
                 return outputResult(List.of(), "No Forage properties files found");
             }
@@ -115,53 +101,6 @@ public class ConfigReadCommand extends CamelCommand {
         } catch (Exception e) {
             return outputError("Error reading configuration: " + e.getMessage());
         }
-    }
-
-    private List<File> findPropertiesFiles(File dir) throws IOException {
-        List<File> result = new ArrayList<>();
-
-        // Determine which files to search based on strategy
-        final Set<String> targetFileNames = determineTargetFileNames();
-
-        // Search for matching properties files
-        try (Stream<Path> paths = Files.walk(dir.toPath())) {
-            paths.filter(Files::isRegularFile)
-                    .filter(p -> {
-                        String fileName = p.getFileName().toString();
-                        // Match exact file names from catalog or forage-*.properties pattern
-                        if (targetFileNames.contains(fileName)) {
-                            return true;
-                        }
-                        // Also match any forage-*.properties files for extensibility
-                        if (!"application".equalsIgnoreCase(strategy)
-                                && fileName.startsWith("forage-")
-                                && fileName.endsWith(".properties")) {
-                            return true;
-                        }
-                        return false;
-                    })
-                    .forEach(p -> result.add(p.toFile()));
-        }
-
-        return result;
-    }
-
-    private Set<String> determineTargetFileNames() {
-        Set<String> targetFileNames = new java.util.HashSet<>();
-
-        if ("application".equalsIgnoreCase(strategy)) {
-            // Only search in application.properties
-            targetFileNames.add("application.properties");
-        } else {
-            // Get properties file names from the catalog
-            for (ForageCatalogReader.FactoryMetadata metadata : catalog.getAllFactories()) {
-                String propsFile = metadata.propertiesFileName();
-                if (propsFile != null && !propsFile.isEmpty()) {
-                    targetFileNames.add(propsFile);
-                }
-            }
-        }
-        return targetFileNames;
     }
 
     private List<BeanInfo> parsePropertiesFile(File file) throws IOException {
@@ -595,14 +534,6 @@ public class ConfigReadCommand extends CamelCommand {
 
         printer().println(OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(result));
         return 0;
-    }
-
-    private int outputError(String message) throws JsonProcessingException {
-        Map<String, Object> error = new HashMap<>();
-        error.put("success", false);
-        error.put("error", message);
-        printer().println(OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(error));
-        return 1;
     }
 
     // Helper classes

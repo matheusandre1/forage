@@ -15,12 +15,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import org.apache.camel.dsl.jbang.core.commands.CamelCommand;
 import org.apache.camel.dsl.jbang.core.commands.CamelJBangMain;
 import io.kaoto.forage.catalog.reader.ForageCatalogReader;
+import io.kaoto.forage.plugin.ForagePropertyScanner;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import picocli.CommandLine;
 
 /**
@@ -28,11 +27,9 @@ import picocli.CommandLine;
  * This command creates, updates, or merges properties files based on JSON input from the Kaoto wizard.
  */
 @CommandLine.Command(name = "write", description = "Write Forage configuration from JSON input to properties files")
-public class ConfigWriteCommand extends CamelCommand {
+public class ConfigWriteCommand extends AbstractConfigCommand {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String KEY_SUCCESS = "success";
-    private static final String APPLICATION_PROPERTIES = "application.properties";
     private static final String FORAGE_PREFIX = "forage.";
 
     @CommandLine.Option(
@@ -55,15 +52,6 @@ public class ConfigWriteCommand extends CamelCommand {
             description = "Instance name to delete (used with --delete).")
     private String instanceName;
 
-    @CommandLine.Option(
-            names = {"--strategy", "-s"},
-            description = "Property file strategy: 'application' writes to application.properties (default), "
-                    + "'forage' writes to forage-*.properties files.",
-            defaultValue = "application")
-    private String strategy;
-
-    private ForageCatalogReader catalog;
-
     public ConfigWriteCommand(CamelJBangMain main) {
         super(main);
     }
@@ -71,7 +59,10 @@ public class ConfigWriteCommand extends CamelCommand {
     @Override
     public Integer doCall() throws Exception {
         try {
-            catalog = ForageCatalogReader.getInstance();
+            Optional<String> strategyError = initCatalogAndStrategy();
+            if (strategyError.isPresent()) {
+                return outputError(strategyError.get());
+            }
 
             if (directory == null) {
                 directory = new File(System.getProperty("user.dir"));
@@ -135,17 +126,21 @@ public class ConfigWriteCommand extends CamelCommand {
                     + "(e.g., 'forage.jdbc.url', 'jdbc.url', 'forage.jms.broker.url', 'jms.broker.url').");
         }
 
+        // Fail before writing anything if a factory has no target file under the selected strategy
+        for (String factoryTypeKey : factoryConfigs.keySet()) {
+            if (strategy.getPropertiesFileName(factoryTypeKey) == null) {
+                return outputError(getFactoryDisplayName(factoryTypeKey)
+                        + " has no dedicated properties file; use --strategy application to configure it.");
+            }
+        }
+
         // Process each factory type
         Map<String, Object> results = new LinkedHashMap<>();
         for (Map.Entry<String, FactoryConfig> entry : factoryConfigs.entrySet()) {
             String factoryTypeKey = entry.getKey();
             FactoryConfig factoryConfig = entry.getValue();
 
-            String propertiesFileName = getPropertiesFileName(factoryTypeKey);
-            if (propertiesFileName == null) {
-                continue;
-            }
-
+            String propertiesFileName = strategy.getPropertiesFileName(factoryTypeKey);
             File propertiesFile = new File(directory, propertiesFileName);
             String operation = propertiesFile.exists() ? "update" : "create";
 
@@ -170,7 +165,7 @@ public class ConfigWriteCommand extends CamelCommand {
         // Collect and write dependencies to application.properties
         DependencyInfo dependencies = collectDependencies(factoryConfigs);
         if (hasDependencies(dependencies)) {
-            File appPropertiesFile = new File(directory, APPLICATION_PROPERTIES);
+            File appPropertiesFile = new File(directory, ForagePropertyScanner.APPLICATION_PROPERTIES);
             updateDependencies(appPropertiesFile, dependencies);
 
             // Add dependency info to results
@@ -368,13 +363,6 @@ public class ConfigWriteCommand extends CamelCommand {
         }
         sb.append(inputKey);
         return sb.toString();
-    }
-
-    private String getPropertiesFileName(String factoryTypeKey) {
-        if ("application".equalsIgnoreCase(strategy)) {
-            return APPLICATION_PROPERTIES;
-        }
-        return catalog.getPropertiesFileName(factoryTypeKey).orElse(null);
     }
 
     /**
@@ -625,11 +613,8 @@ public class ConfigWriteCommand extends CamelCommand {
         Set<String> allDeletedTypes = new HashSet<>();
         Set<String> allDeletedFactoryTypeKeys = new HashSet<>();
 
-        // Determine which properties files to scan based on strategy
-        final Set<File> propertiesFilesToScan = determineScanableProperties();
-
-        // Delete instance configuration from all relevant files
-        for (File propertiesFile : propertiesFilesToScan) {
+        // Delete instance configuration from the same files `config read` lists for this strategy
+        for (File propertiesFile : strategy.findPropertiesFiles(directory)) {
             DeletedConfigInfo deletedInfo = deleteInstanceConfiguration(propertiesFile, instanceName);
             if (!deletedInfo.deletedPropertyKeys().isEmpty()) {
                 allDeletedTypes.addAll(deletedInfo.deletedTypes());
@@ -653,7 +638,7 @@ public class ConfigWriteCommand extends CamelCommand {
         }
 
         // After deletion, clean up dependencies that are no longer needed
-        File appPropertiesFile = new File(directory, APPLICATION_PROPERTIES);
+        File appPropertiesFile = new File(directory, ForagePropertyScanner.APPLICATION_PROPERTIES);
         Map<String, Object> dependencyCleanupResult =
                 cleanupUnusedDependencies(appPropertiesFile, allDeletedTypes, allDeletedFactoryTypeKeys);
         if (!dependencyCleanupResult.isEmpty()) {
@@ -668,27 +653,6 @@ public class ConfigWriteCommand extends CamelCommand {
         printer().println(OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(output));
 
         return 0;
-    }
-
-    private Set<File> determineScanableProperties() {
-        Set<File> propertiesFilesToScan = new HashSet<>();
-        if ("application".equalsIgnoreCase(strategy)) {
-            File appProps = new File(directory, APPLICATION_PROPERTIES);
-            if (appProps.exists()) {
-                propertiesFilesToScan.add(appProps);
-            }
-        } else {
-            for (ForageCatalogReader.FactoryMetadata metadata : catalog.getAllFactories()) {
-                String propertiesFileName = getPropertiesFileName(metadata.factoryTypeKey());
-                if (propertiesFileName != null) {
-                    File propertiesFile = new File(directory, propertiesFileName);
-                    if (propertiesFile.exists()) {
-                        propertiesFilesToScan.add(propertiesFile);
-                    }
-                }
-            }
-        }
-        return propertiesFilesToScan;
     }
 
     // Property key suffixes that contain the bean kind (e.g., *.db.kind, *.kind)
@@ -739,6 +703,7 @@ public class ConfigWriteCommand extends CamelCommand {
                             deletedFactoryTypeKeys.add(typeSegment);
                         }
                     }
+                    ForagePropertyScanner.findFactoryTypeKey(key, catalog).ifPresent(deletedFactoryTypeKeys::add);
 
                     // Also extract kind from property VALUES (e.g., *.db.kind=postgresql, *.kind=artemis)
                     for (String kindSuffix : KIND_PROPERTY_SUFFIXES) {
@@ -801,14 +766,18 @@ public class ConfigWriteCommand extends CamelCommand {
      * This includes both type segments from property keys (e.g., "jdbc", "jms")
      * and kind values from property values (e.g., "postgresql", "artemis").
      *
+     * <p>All files returned by {@link ForagePropertyScanner#findRuntimePropertiesFiles(File, ForageCatalogReader)}
+     * are scanned regardless of the selected strategy ({@code application.properties}, the active profile file
+     * and the {@code forage-*.properties} files), so deleting an instance does not drop dependencies still
+     * needed by an instance defined in another file. The factory type of each property is resolved with the
+     * scanner's parsing, which also covers default (unnamed) instances such as {@code forage.rabbitmq.host}.
+     *
      * @return set of type segments still in use (e.g., "jdbc", "ollama", "postgresql")
      */
     private Set<String> findConfiguredTypes() throws IOException {
         Set<String> configuredTypes = new HashSet<>();
 
-        final Set<File> propertiesFilesToScan = determineScanableProperties();
-
-        for (File propertiesFile : propertiesFilesToScan) {
+        for (File propertiesFile : ForagePropertyScanner.findRuntimePropertiesFiles(directory, catalog)) {
             List<String> lines = java.nio.file.Files.readAllLines(propertiesFile.toPath(), StandardCharsets.UTF_8);
             for (String line : lines) {
                 String trimmed = line.trim();
@@ -819,6 +788,9 @@ public class ConfigWriteCommand extends CamelCommand {
                 if (equalsIndex > 0) {
                     String key = line.substring(0, equalsIndex).trim();
                     String value = line.substring(equalsIndex + 1).trim();
+
+                    // Factory type as resolved by the runtime parsing (named and default instances)
+                    ForagePropertyScanner.findFactoryTypeKey(key, catalog).ifPresent(configuredTypes::add);
 
                     // Parse forage.{instanceName}.{type}.* pattern
                     if (key.startsWith(FORAGE_PREFIX)) {
@@ -987,14 +959,6 @@ public class ConfigWriteCommand extends CamelCommand {
         result.put("removedDependencies", new ArrayList<>(removedGavs));
         result.put("count", removedGavs.size());
         return result;
-    }
-
-    private int outputError(String message) throws JsonProcessingException {
-        Map<String, Object> error = new HashMap<>();
-        error.put(KEY_SUCCESS, false);
-        error.put("error", message);
-        printer().println(OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(error));
-        return 1;
     }
 
     /**
