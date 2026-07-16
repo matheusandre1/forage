@@ -36,6 +36,25 @@ forage.backupBroker.jms.kind=artemis
 forage.backupBroker.jms.url=tcp://broker2:61617
 ```
 
+### Per-Broker Components
+
+Each named broker prefix registers its own `JmsComponent` in the Camel context, so routes can
+reference the prefix name directly as the component:
+
+```yaml
+# Uses the primaryBroker component (and its connection factory)
+- from:
+    uri: primaryBroker:queue:orders
+
+# Uses the backupBroker component
+- to:
+    uri: backupBroker:queue:audit
+```
+
+This replaces the older pattern of using `jms:` with a `connectionFactory` parameter.
+The default (unprefixed) configuration continues to use the `jms` component for backwards
+compatibility.
+
 ## XA Transactions
 
 Setting `forage.jms.transaction.enabled=true` switches the module to XA mode:
@@ -47,6 +66,40 @@ Setting `forage.jms.transaction.enabled=true` switches the module to XA mode:
   Camel registry for use with the `transacted` EIP.
 - The Camel JMS component is configured with a JTA transaction manager, so consumers receive
   each message inside a JTA transaction and a rollback returns the message to the broker.
+
+### Mixed XA and Non-XA Brokers
+
+Transaction wiring is scoped per broker. In a mixed setup — one XA broker for transactional
+work, one plain broker for fire-and-forget — each broker's semantics are self-contained:
+
+```properties
+# XA broker — full two-phase commit
+forage.xaBroker.jms.kind=ibm-mq
+forage.xaBroker.jms.broker.url=localhost(1414)
+forage.xaBroker.jms.transaction.enabled=true
+
+# Plain broker — no transaction manager
+forage.plainBroker.jms.kind=artemis
+forage.plainBroker.jms.broker.url=tcp://localhost:61616
+```
+
+Routes reference each broker by prefix:
+
+```yaml
+# Transactional consumption from the XA broker
+- from:
+    uri: xaBroker:queue:orders
+    steps:
+      - transacted: {}
+      - to: sql:insert into orders values(:#id, :#name)?dataSource=#myDb
+
+# Non-transactional send to the plain broker
+- to:
+    uri: plainBroker:queue:audit
+```
+
+The `xaBroker` component gets a `JtaTransactionManager`; the `plainBroker` component does not.
+This avoids the overhead and confusion of wrapping non-XA sessions in JTA transactions.
 
 !!! warning "Endpoint contract"
     Leave `transacted` at its default (`false`) on `jms:` endpoints. The JTA transaction manager

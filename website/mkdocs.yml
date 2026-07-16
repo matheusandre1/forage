@@ -128,6 +128,8 @@ nav:
       - JMS: modules/jms.md
       - Spring RabbitMQ: modules/spring-rabbitmq.md
       - CXF: modules/cxf.md
+      - Security:
+          - TLS: modules/security/tls.md
   - Guides:
       - guides/index.md
       - Camel JBang: guides/camel-jbang.md

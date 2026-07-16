@@ -133,3 +133,4 @@ Both routes fire once. The Gemini agent receives "give the details of user 123",
 - **Mix providers freely**: combine cloud APIs (Gemini, OpenAI, Anthropic) with local models (Ollama) by changing `model.kind`.
 - **Tags control tool access**: only agents with matching tags can invoke a given tool. Agents without tags operate without tools.
 - **Configuration isolation**: each agent has its own model, memory, and API credentials. Changing one agent does not affect the other.
+- **Deterministic provider selection**: when multiple providers of the same type are on the classpath, Forage selects deterministically by `@ForageBean` value rather than classpath order.

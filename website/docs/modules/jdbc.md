@@ -27,6 +27,10 @@ forage.myDb.jdbc.password=secret
 
 {{ forage_properties("DataSource") }}
 
+!!! info "Unknown db.kind"
+    Setting an unrecognized `db.kind` value now fails at startup with an error listing the
+    available providers, instead of producing a `NullPointerException` later.
+
 ## Multiple Datasources
 
 Use different names to configure multiple databases:

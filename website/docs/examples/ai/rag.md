@@ -138,3 +138,4 @@ Without access to the knowledge base, the agent cannot confirm the refund amount
 - **Automatic document processing**: Forage handles chunking, embedding, and loading the knowledge base file at startup.
 - **Tunable retrieval**: `max.results` and `min.score` control how much context the agent receives, balancing relevance against noise.
 - **Same agent pattern**: the route looks identical to a non-RAG agent. The RAG behavior is entirely driven by configuration.
+- **Fail-fast on misconfiguration**: if RAG properties are present but the pipeline cannot be assembled (e.g., missing embedding provider dependency), Forage fails at startup with an actionable error instead of silently running without RAG.

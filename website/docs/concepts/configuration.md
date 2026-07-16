@@ -137,6 +137,7 @@ Or split them into separate files for clarity:
 forage-datasource-factory.properties   # JDBC configuration
 forage-connectionfactory.properties    # JMS configuration
 forage-agent-factory.properties        # AI agent configuration
+forage-security-tls.properties         # TLS/SSL configuration
 ```
 
 ## Required vs Optional Properties
@@ -180,7 +181,18 @@ Each name registers a separate bean. Use them in routes by name:
       query: select * from orders
       dataSource: "#ordersDb"
 - to:
-    uri: jms:queue:events
-    parameters:
-      connectionFactory: "#primaryBroker"
+    uri: primaryBroker:queue:events
+```
+
+The same pattern works for TLS profiles:
+
+```properties
+# Internal mTLS
+forage.internal.tls.keystore.path=/certs/internal.p12
+forage.internal.tls.keystore.password=changeit
+forage.internal.tls.keystore.type=PKCS12
+
+# External trust-only
+forage.external.tls.truststore.path=/certs/external-ca.jks
+forage.external.tls.truststore.password=trustme
 ```

@@ -1,8 +1,78 @@
 # Migration Guide
 
-This guide helps you migrate from framework-specific configuration to Forage's unified approach.
+This guide covers both version-to-version upgrade notes and migrating from framework-specific configuration to Forage.
 
-## Why Migrate to Forage?
+---
+
+## Upgrading to 1.5.0
+
+### Breaking Changes
+
+#### Guardrails require explicit opt-in
+
+Guardrails no longer activate by classpath presence alone. You must explicitly list the guardrails to enable:
+
+```properties
+# AgentCreator (forage-agent)
+forage.myAgent.agent.guardrails.input=pii-detector,keyword-filter
+forage.myAgent.agent.guardrails.output=pii-redactor
+
+# MultiAgentFactory (forage-agent-factories)
+forage.guardrails.input=pii-detector
+forage.guardrails.output=pii-redactor
+```
+
+Values are comma-separated `@ForageBean` names. The old `forage.guardrails.input.classes` property (FQCN-based) is replaced.
+
+Selected guardrails that fail to create now **throw at startup** instead of being silently skipped (fail closed).
+
+#### Default model names updated
+
+If you relied on the default model name without setting `model.name` explicitly, the defaults have changed:
+
+| Provider | Old Default | New Default |
+|---|---|---|
+| OpenAI | `gpt-3.5-turbo` | `gpt-4o-mini` |
+| Anthropic | `claude-3-haiku-20240307` | `claude-haiku-4-5-20251001` |
+| Ollama (chat) | `llama3` | `llama3.2` |
+| Ollama (embeddings) | `llama3` | `nomic-embed-text` |
+
+#### Removed configuration entries
+
+The following properties have been removed. Setting them now produces an `UNKNOWN_PROPERTY` warning in strict mode:
+
+**Hugging Face** — 6 unsupported entries removed: `top.k`, `top.p`, `do.sample`, `repetition.penalty`, `max.retries`, `log.requests.and.responses`
+
+**WatsonX AI** — 5 unsupported entries removed: `top.k`, `min.new.tokens`, `max.retries`, `repetition.penalty`, `timeout`
+
+**Agent config** — 5 dead memory entries removed: `agent.memory.redis.host`, `agent.memory.redis.port`, `agent.memory.infinispan.host`, `agent.memory.infinispan.port`, `agent.memory.infinispan.cache.name` (standalone memory modules have their own config)
+
+### Behavioral Changes
+
+#### Misconfiguration now fails fast
+
+Previously, several misconfiguration scenarios were silently ignored. They now fail at startup with actionable error messages:
+
+- **Unknown JMS kind** (e.g., `forage.jms.kind=typo`): previously fell back to Artemis silently; now throws `IllegalArgumentException` listing valid kinds.
+- **Unknown JDBC db.kind**: previously resulted in a `NullPointerException`; now throws `IllegalStateException` listing available providers.
+- **RAG assembly failure**: previously logged at TRACE and returned null (agent ran without RAG); now throws at startup when embedding config is present but the pipeline can't be assembled.
+- **Agent creation failure**: previously logged at WARN and swallowed; now rethrows at startup.
+
+#### Azure OpenAI and Chroma logging defaults
+
+Request/response logging for Azure OpenAI and Chroma vector database was **enabled by default** due to an inverted null-check. This has been corrected — logging is now **off by default**, matching all other providers. If you relied on the implicit logging, set `log.requests.and.responses=true` explicitly.
+
+#### JMS per-broker transaction scoping
+
+Each named JMS broker prefix now gets its own `JmsComponent` registered under the prefix name, with self-contained transaction semantics. See the [JMS module docs](../modules/jms.md#per-broker-components) for details.
+
+---
+
+## Migrating to Forage
+
+This section helps you migrate from framework-specific configuration to Forage's unified approach.
+
+### Why Migrate to Forage?
 
 Forage solves a fundamental problem: **configuration fragmentation across runtimes**. Spring Boot and Quarkus use completely different property naming conventions for the same functionality, making it difficult to:
 
@@ -14,7 +84,7 @@ Forage solves a fundamental problem: **configuration fragmentation across runtim
 
 ---
 
-## The Configuration Fragmentation Problem
+### The Configuration Fragmentation Problem
 
 ### JDBC Example: Three Different Ways
 
@@ -64,7 +134,7 @@ The same PostgreSQL datasource requires different configuration in each runtime:
 
 ---
 
-## JDBC Migration
+### JDBC Migration
 
 ### From Spring Boot
 
@@ -369,7 +439,7 @@ forage.analyticsDb.jdbc.pool.max.size=15
 
 ---
 
-## JMS Migration
+### JMS Migration
 
 ### From Spring Boot
 
@@ -593,7 +663,7 @@ forage.backupBroker.jms.pool.max.connections=10
 
 ---
 
-## AI Agent Migration
+### AI Agent Migration
 
 ### From Manual LangChain4j Setup
 
@@ -730,7 +800,7 @@ forage.ollamaAgent.agent.features=memoryless
 
 ---
 
-## Configuration Comparison Tables
+### Configuration Comparison Tables
 
 ### JDBC Configuration
 
@@ -756,7 +826,7 @@ forage.ollamaAgent.agent.features=memoryless
 
 ---
 
-## Real-World Example: Multi-Database Application
+### Real-World Example: Multi-Database Application
 
 ### Scenario
 
@@ -881,7 +951,7 @@ export ORDERS_PASS=prod_pass
 
 ---
 
-## Getting Help
+### Getting Help
 
 If you encounter issues during migration:
 

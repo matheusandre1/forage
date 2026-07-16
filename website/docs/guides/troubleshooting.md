@@ -76,6 +76,77 @@ camel run * --strict
 
 The validator uses Levenshtein distance to suggest corrections. See the [Property Validation](../guides/camel-jbang.md#property-validation) guide for details.
 
+### Unknown Provider Kind
+
+**Error:**
+```
+IllegalArgumentException: Unknown JMS kind 'activemq'. Valid options: [artemis, ibm-mq]
+```
+
+or:
+
+```
+IllegalStateException: No DataSourceProvider found for kind 'postgres'. Available providers: [postgresql, mysql, ...]
+```
+
+**Causes:**
+
+- Typo in `jms.kind` or `db.kind` value
+- Missing provider dependency on the classpath
+
+**Solutions:**
+
+1. **Check spelling** — use the exact kind name from the error message's valid options list.
+2. **Add the provider dependency:**
+   ```xml
+   <dependency>
+       <groupId>io.kaoto.forage</groupId>
+       <artifactId>forage-jdbc-postgresql</artifactId>
+       <version>{{ forage_version }}</version>
+   </dependency>
+   ```
+
+### RAG Assembly Failure
+
+**Error:**
+```
+IllegalStateException: Failed to assemble RAG pipeline: no EmbeddingModelProvider found on the classpath
+```
+
+**Causes:**
+
+- Embedding model properties are configured but the embedding provider jar is missing
+- Vector store cannot be initialized (e.g., connection refused)
+
+**Solutions:**
+
+1. **Add the embedding provider dependency:**
+   ```xml
+   <dependency>
+       <groupId>io.kaoto.forage</groupId>
+       <artifactId>forage-model-embeddings-ollama</artifactId>
+       <version>{{ forage_version }}</version>
+   </dependency>
+   ```
+2. Verify the embedding model service is running and reachable.
+
+### Guardrail Creation Failure
+
+**Error:**
+```
+RuntimeForageException: Failed to create guardrail 'pii-detector': ...
+```
+
+**Cause:**
+
+A guardrail was explicitly selected via `forage.agent.guardrails.input` but could not be created (missing dependency, misconfiguration).
+
+**Solution:**
+
+1. Verify the guardrail `@ForageBean` value is correct.
+2. Ensure the guardrail dependency is on the classpath.
+3. Check the full stack trace for the root cause (missing config, connection failure, etc.).
+
 ### Bean Reference Errors
 
 **Error:**
